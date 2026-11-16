@@ -2,7 +2,11 @@
 
 Een schattig browser-arcadespel. Speel het via HTTPS, zodat kantelbesturing op de telefoon werkt.
 
-**Spelen:** https://githubraw.com/henkgrok-code/nijntje-in-de-ruimte/main/index.html
+**Spelen (aanbevolen, vastgelegde versie):**  
+https://cdn.githubraw.com/henkgrok-code/nijntje-in-de-ruimte/3e99cf1a53ee74c80048a432f397f12d2157eeb5/index.html
+
+**Spelen (volgt `main`, cache kan een paar minuten achterlopen):**  
+https://githubraw.com/henkgrok-code/nijntje-in-de-ruimte/main/index.html
 
 Besturing: pijltjes of A/D, spatie om te schieten, P voor pauze. Op de telefoon: knoppen, slepen, of kantelen.
 
