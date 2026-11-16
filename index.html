@@ -440,15 +440,21 @@
     ctx: null,
     muted: false,
     init() {
-      if (!this.ctx) {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        this.ctx = new AC();
-      }
-      if (this.ctx && this.ctx.state === "suspended") this.ctx.resume();
+      try {
+        if (!this.ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return;
+          this.ctx = new AC();
+        }
+        if (this.ctx && this.ctx.state === "suspended") {
+          const p = this.ctx.resume();
+          if (p && typeof p.catch === "function") p.catch(function(){});
+        }
+      } catch (e) {}
     },
     tone(freq, dur, type, vol, slide, delay) {
       if (this.muted || !this.ctx) return;
+      try {
       const t0 = this.ctx.currentTime + (delay || 0);
       const o = this.ctx.createOscillator();
       const g = this.ctx.createGain();
@@ -459,9 +465,11 @@
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
       o.connect(g); g.connect(this.ctx.destination);
       o.start(t0); o.stop(t0 + dur + 0.02);
+      } catch (e) {}
     },
     noise(dur, vol) {
       if (this.muted || !this.ctx) return;
+      try {
       const n = 2 * this.ctx.sampleRate * dur | 0;
       const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
       const d = buf.getChannelData(0);
@@ -474,6 +482,7 @@
       g.gain.value = vol || 0.1;
       src.connect(f); f.connect(g); g.connect(this.ctx.destination);
       src.start();
+      } catch (e) {}
     },
     shoot() { this.tone(740, 0.07, "square", 0.04, 520); },
     hit() { this.tone(360, 0.1, "triangle", 0.05, 140); this.noise(0.06, 0.05); },
@@ -551,13 +560,21 @@
   }
 
   let touchUI = false;
+  let layoutReady = false;
+  function isCoarsePointer() {
+    try {
+      return !!(navigator.maxTouchPoints > 0 && window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    } catch (e) { return false; }
+  }
   function revealPads() {
-    touchUI = true;
-    document.getElementById("pads").classList.add("show");
-    fit();
+    try {
+      touchUI = true;
+      const padsEl = document.getElementById("pads");
+      if (padsEl) padsEl.classList.add("show");
+      if (layoutReady) fit();
+    } catch (e) {}
   }
   window.addEventListener("touchstart", () => revealPads(), { once: true, passive: true });
-  if (navigator.maxTouchPoints > 0 && window.matchMedia("(pointer: coarse)").matches) revealPads();
 
   // --- Tilt controls ---
   const tiltSupported = typeof window.DeviceOrientationEvent !== "undefined";
@@ -580,37 +597,48 @@
   }
 
   function screenAngle() {
-    let a = 0;
-    if (window.screen && screen.orientation && typeof screen.orientation.angle === "number") a = screen.orientation.angle;
-    else if (typeof window.orientation === "number") a = window.orientation;
-    return ((a % 360) + 360) % 360;
+    try {
+      let a = 0;
+      const so = window.screen && screen.orientation;
+      if (so && typeof so.angle === "number") a = so.angle;
+      else if (typeof window.orientation === "number") a = window.orientation;
+      return ((a % 360) + 360) % 360;
+    } catch (e) { return 0; }
   }
 
   function horizontalTilt(e) {
-    const ang = screenAngle();
-    if (ang === 90) return e.beta || 0;
-    if (ang === 270) return -(e.beta || 0);
-    if (ang === 180) return -(e.gamma || 0);
-    return e.gamma || 0;
+    try {
+      const ang = screenAngle();
+      if (ang === 90) return e.beta || 0;
+      if (ang === 270) return -(e.beta || 0);
+      if (ang === 180) return -(e.gamma || 0);
+      return e.gamma || 0;
+    } catch (err) { return 0; }
   }
 
   function onOrient(e) {
-    if (e.gamma == null && e.beta == null) return;
-    tilt.raw = horizontalTilt(e);
-    tilt.lastEvent = performance.now();
+    try {
+      if (!e || (e.gamma == null && e.beta == null)) return;
+      tilt.raw = horizontalTilt(e);
+      tilt.lastEvent = performance.now();
+    } catch (err) {}
   }
 
   function startTiltListen() {
-    if (tilt.listening || !tiltSupported) return;
-    window.addEventListener("deviceorientation", onOrient, true);
-    window.addEventListener("deviceorientationabsolute", onOrient, true);
-    tilt.listening = true;
+    try {
+      if (tilt.listening || !tiltSupported) return;
+      window.addEventListener("deviceorientation", onOrient, true);
+      window.addEventListener("deviceorientationabsolute", onOrient, true);
+      tilt.listening = true;
+    } catch (e) {}
   }
 
   function stopTiltListen() {
-    if (!tilt.listening) return;
-    window.removeEventListener("deviceorientation", onOrient, true);
-    window.removeEventListener("deviceorientationabsolute", onOrient, true);
+    try {
+      if (!tilt.listening) return;
+      window.removeEventListener("deviceorientation", onOrient, true);
+      window.removeEventListener("deviceorientationabsolute", onOrient, true);
+    } catch (e) {}
     tilt.listening = false;
     tilt.raw = 0;
     tilt.smooth = 0;
@@ -618,23 +646,29 @@
 
   async function ensureTiltPermission() {
     if (!tilt.wanted || !tiltSupported) return;
-    const DOE = window.DeviceOrientationEvent;
-    if (DOE && typeof DOE.requestPermission === "function") {
-      try {
-        const res = await DOE.requestPermission();
-        if (res === "granted") {
-          tilt.denied = false;
-          startTiltListen();
-        } else {
+    try {
+      const DOE = window.DeviceOrientationEvent;
+      if (DOE && typeof DOE.requestPermission === "function") {
+        try {
+          const res = await DOE.requestPermission();
+          if (res === "granted") {
+            tilt.denied = false;
+            startTiltListen();
+          } else {
+            tilt.denied = true;
+            stopTiltListen();
+          }
+          updateTiltButton();
+        } catch (err) {
           tilt.denied = true;
           stopTiltListen();
+          updateTiltButton();
         }
-      } catch (err) {
-        tilt.denied = true;
-        stopTiltListen();
+      } else {
+        startTiltListen();
       }
-    } else {
-      startTiltListen();
+    } catch (e) {
+      tilt.denied = true;
     }
   }
 
@@ -643,18 +677,22 @@
   }
 
   function updateTiltButton() {
-    if (!tiltSupported) {
-      btnTilt.textContent = "Kantelbesturing niet beschikbaar";
-      btnTilt.setAttribute("aria-pressed", "false");
-      btnTilt.disabled = true;
-    } else {
-      btnTilt.disabled = false;
-      const on = tilt.wanted && !tilt.denied;
-      btnTilt.textContent = on ? "Kantelbesturing: aan" : "Kantelbesturing: uit";
-      btnTilt.setAttribute("aria-pressed", on ? "true" : "false");
-    }
-    const show = state.mode === "title" || state.mode === "gameover";
-    btnTilt.classList.toggle("show", show);
+    try {
+      if (!btnTilt) return;
+      if (!tiltSupported) {
+        btnTilt.textContent = "Kantelbesturing niet beschikbaar";
+        btnTilt.setAttribute("aria-pressed", "false");
+        btnTilt.disabled = true;
+      } else {
+        btnTilt.disabled = false;
+        const on = tilt.wanted && !tilt.denied;
+        btnTilt.textContent = on ? "Kantelbesturing: aan" : "Kantelbesturing: uit";
+        btnTilt.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+      const mode = layoutReady ? state.mode : "title";
+      const show = mode === "title" || mode === "gameover";
+      btnTilt.classList.toggle("show", show);
+    } catch (e) {}
   }
 
   function setTiltWanted(on) {
@@ -677,14 +715,17 @@
 
   // --- Layout ---
   function fit() {
-    const extra = (touchUI ? 118 : 0) + ((state && (state.mode === "title" || state.mode === "gameover")) ? 52 : 0);
-    const vw = window.innerWidth;
-    const vh = window.innerHeight - extra;
-    const scale = Math.max(0.5, Math.min(vw / W, vh / H));
-    const intScale = Math.floor(scale);
-    const use = sChoice(scale, intScale);
-    canvas.style.width = Math.floor(W * use) + "px";
-    canvas.style.height = Math.floor(H * use) + "px";
+    try {
+      const titleLike = !layoutReady || !state || state.mode === "title" || state.mode === "gameover";
+      const extra = (touchUI ? 118 : 0) + (titleLike ? 52 : 0);
+      const vw = window.innerWidth || 390;
+      const vh = (window.innerHeight || 844) - extra;
+      const scale = Math.max(0.5, Math.min(vw / W, Math.max(80, vh) / H));
+      const intScale = Math.floor(scale);
+      const use = sChoice(scale, intScale);
+      canvas.style.width = Math.floor(W * use) + "px";
+      canvas.style.height = Math.floor(H * use) + "px";
+    } catch (e) {}
   }
   function sChoice(scale, intScale) {
     if (scale < 1) return scale;
@@ -807,11 +848,16 @@
   }
 
   function pressAction() {
-    if (state.mode === "title" || state.mode === "gameover") {
-      const p = ensureTiltPermission();
-      if (p && typeof p.then === "function") p.finally(startGame);
-      else startGame();
-    } else if (state.mode === "paused") state.mode = "playing";
+    try {
+      if (state.mode === "title" || state.mode === "gameover") {
+        try { ensureTiltPermission(); } catch (e) {}
+        startGame();
+      } else if (state.mode === "paused") {
+        state.mode = "playing";
+      }
+    } catch (e) {
+      try { startGame(); } catch (e2) {}
+    }
   }
 
   function startGame() {
@@ -1489,16 +1535,21 @@
   // --- Loop ---
   let last = 0;
   function loop(ts) {
-    if (!last) last = ts;
-    let dt = (ts - last) / 1000;
-    last = ts;
-    if (dt > 0.05) dt = 0.05;
-    update(dt);
-    draw();
+    try {
+      if (!last) last = ts;
+      let dt = (ts - last) / 1000;
+      last = ts;
+      if (dt > 0.05) dt = 0.05;
+      update(dt);
+      draw();
+    } catch (e) {}
     requestAnimationFrame(loop);
   }
-  updateTiltButton();
-  fit();
+  layoutReady = true;
+  try { updateTiltButton(); } catch (e) {}
+  try { fit(); } catch (e) {}
+  try { if (isCoarsePointer()) revealPads(); } catch (e) {}
+  try { draw(); } catch (e) {}
   requestAnimationFrame(loop);
 
   window.__game = {
