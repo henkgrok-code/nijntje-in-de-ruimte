@@ -60,20 +60,33 @@
     display: none;
     width: 100%;
     max-width: 420px;
-    padding: 10px 16px 16px;
+    padding: 8px 12px 14px;
     justify-content: space-between;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
     flex-shrink: 0;
   }
   #pads.show { display: flex; }
-  .cluster { display: flex; gap: 10px; }
+  #dpad {
+    display: grid;
+    grid-template-columns: 54px 54px 54px;
+    grid-template-rows: 54px 54px 54px;
+    grid-template-areas:
+      ". up ."
+      "left . right"
+      ". down .";
+    gap: 4px;
+  }
+  #btnU { grid-area: up; }
+  #btnD { grid-area: down; }
+  #btnL { grid-area: left; }
+  #btnR { grid-area: right; }
   .btn {
-    width: 72px; height: 72px;
+    width: 54px; height: 54px;
     border: 3px solid #5a2a48;
     background: #2a1020;
     color: #ffd0e0;
-    font: 700 22px/1 monospace;
+    font: 700 18px/1 monospace;
     border-radius: 10px;
     display: flex;
     align-items: center;
@@ -104,9 +117,11 @@
     <button type="button" id="btnTilt" aria-pressed="true">Kantelbesturing: aan</button>
   </div>
   <div id="pads">
-    <div class="cluster">
+    <div id="dpad">
+      <div class="btn" id="btnU" aria-label="Omhoog">▲</div>
       <div class="btn" id="btnL" aria-label="Links">◀</div>
       <div class="btn" id="btnR" aria-label="Rechts">▶</div>
+      <div class="btn" id="btnD" aria-label="Omlaag">▼</div>
     </div>
     <div class="btn" id="btnFire">Vuur</div>
   </div>
@@ -502,7 +517,7 @@
 
   // --- Input ---
   const keys = Object.create(null);
-  const pads = { left: false, right: false, fire: false, dragX: null, pointerFire: false };
+  const pads = { left: false, right: false, up: false, down: false, fire: false, dragX: null, dragY: null, pointerFire: false };
 
   function bindHold(el, prop) {
     const on = ev => { ev.preventDefault(); pads[prop] = true; el.classList.add("held"); SFX.init(); };
@@ -514,11 +529,13 @@
   }
   bindHold(document.getElementById("btnL"), "left");
   bindHold(document.getElementById("btnR"), "right");
+  bindHold(document.getElementById("btnU"), "up");
+  bindHold(document.getElementById("btnD"), "down");
   bindHold(document.getElementById("btnFire"), "fire");
 
   window.addEventListener("keydown", e => {
     const k = e.key;
-    if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," ","p","P","m","M","a","A","d","D"].includes(k)) e.preventDefault();
+    if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," ","p","P","m","M","a","A","d","D","w","W","s","S"].includes(k)) e.preventDefault();
     keys[k] = true;
     SFX.init();
     if (k === "p" || k === "P") togglePause();
@@ -537,15 +554,19 @@
     if (state.mode === "paused") { togglePause(); return; }
     pads.pointerFire = true;
     pads.dragX = p.x;
+    pads.dragY = p.y;
     try { canvas.setPointerCapture(ev.pointerId); } catch (e) {}
   });
   canvas.addEventListener("pointermove", ev => {
-    if (pads.dragX === null) return;
-    pads.dragX = canvasPt(ev).x;
+    if (pads.dragX === null && pads.dragY === null) return;
+    const q = canvasPt(ev);
+    pads.dragX = q.x;
+    pads.dragY = q.y;
   });
   function endPtr() {
     pads.pointerFire = false;
     pads.dragX = null;
+    pads.dragY = null;
   }
   canvas.addEventListener("pointerup", endPtr);
   canvas.addEventListener("pointercancel", endPtr);
@@ -581,8 +602,13 @@
   const tilt = {
     wanted: false,
     listening: false,
-    raw: 0,
-    smooth: 0,
+    rawX: 0,
+    rawY: 0,
+    smoothX: 0,
+    smoothY: 0,
+    neutralX: 0,
+    neutralY: 0,
+    needsCalibrate: false,
     lastEvent: 0,
     denied: false
   };
@@ -606,21 +632,47 @@
     } catch (e) { return 0; }
   }
 
-  function horizontalTilt(e) {
+  // Screen-space tilt: +x = right, +y = pitch used for up (beta in portrait).
+  function tiltAxes(e) {
     try {
+      const g = (e && e.gamma != null) ? e.gamma : 0;
+      const b = (e && e.beta != null) ? e.beta : 0;
       const ang = screenAngle();
-      if (ang === 90) return e.beta || 0;
-      if (ang === 270) return -(e.beta || 0);
-      if (ang === 180) return -(e.gamma || 0);
-      return e.gamma || 0;
-    } catch (err) { return 0; }
+      if (ang === 90) return { x: b, y: -g };
+      if (ang === 270) return { x: -b, y: g };
+      if (ang === 180) return { x: -g, y: -b };
+      return { x: g, y: b };
+    } catch (err) { return { x: 0, y: 0 }; }
+  }
+
+  function calibrateTilt() {
+    try {
+      if (tilt.lastEvent > 0) {
+        tilt.neutralX = tilt.rawX;
+        tilt.neutralY = tilt.rawY;
+        tilt.smoothX = 0;
+        tilt.smoothY = 0;
+        tilt.needsCalibrate = false;
+      } else {
+        tilt.needsCalibrate = true;
+      }
+    } catch (e) { tilt.needsCalibrate = true; }
   }
 
   function onOrient(e) {
     try {
       if (!e || (e.gamma == null && e.beta == null)) return;
-      tilt.raw = horizontalTilt(e);
+      const a = tiltAxes(e);
+      tilt.rawX = a.x;
+      tilt.rawY = a.y;
       tilt.lastEvent = performance.now();
+      if (tilt.needsCalibrate) {
+        tilt.neutralX = tilt.rawX;
+        tilt.neutralY = tilt.rawY;
+        tilt.smoothX = 0;
+        tilt.smoothY = 0;
+        tilt.needsCalibrate = false;
+      }
     } catch (err) {}
   }
 
@@ -640,8 +692,10 @@
       window.removeEventListener("deviceorientationabsolute", onOrient, true);
     } catch (e) {}
     tilt.listening = false;
-    tilt.raw = 0;
-    tilt.smooth = 0;
+    tilt.rawX = 0;
+    tilt.rawY = 0;
+    tilt.smoothX = 0;
+    tilt.smoothY = 0;
   }
 
   async function ensureTiltPermission() {
@@ -717,7 +771,7 @@
   function fit() {
     try {
       const titleLike = !layoutReady || !state || state.mode === "title" || state.mode === "gameover";
-      const extra = (touchUI ? 118 : 0) + (titleLike ? 52 : 0);
+      const extra = (touchUI ? 190 : 0) + (titleLike ? 52 : 0);
       const vw = window.innerWidth || 390;
       const vh = (window.innerHeight || 844) - extra;
       const scale = Math.max(0.5, Math.min(vw / W, Math.max(80, vh) / H));
@@ -870,7 +924,8 @@
     state.invuln = 0;
     state.mode = "waveintro";
     player.x = (W - player.w) / 2;
-    player.y = 210;
+    player.y = playMaxY();
+    try { calibrateTilt(); } catch (e) {}
     player.alive = true;
     bullets = [];
     ebullets = [];
@@ -1050,7 +1105,15 @@
 
   function wantLeft() { return keys.ArrowLeft || keys.a || keys.A || pads.left; }
   function wantRight() { return keys.ArrowRight || keys.d || keys.D || pads.right; }
+  function wantUp() { return keys.ArrowUp || keys.w || keys.W || pads.up; }
+  function wantDown() { return keys.ArrowDown || keys.s || keys.S || pads.down; }
   function wantFire() { return keys[" "] || pads.fire || pads.pointerFire || tiltActive(); }
+  function playMinY() { return Math.max(18, Math.floor(H * 0.40)); }
+  function playMaxY() { return H - player.h - 4; }
+  function clampPlayer() {
+    player.x = Math.max(2, Math.min(W - player.w - 2, player.x));
+    player.y = Math.max(playMinY(), Math.min(playMaxY(), player.y));
+  }
 
   function beginDive(e) {
     if (e.state !== "form") return;
@@ -1069,7 +1132,11 @@
     state.time += dt;
 
     const alpha = 1 - Math.pow(0.08, dt);
-    tilt.smooth += (tilt.raw - tilt.smooth) * Math.min(1, alpha * 8);
+    const tlerp = Math.min(1, alpha * 8);
+    const ax = tilt.rawX - tilt.neutralX;
+    const ay = tilt.rawY - tilt.neutralY;
+    tilt.smoothX += (ax - tilt.smoothX) * tlerp;
+    tilt.smoothY += (ay - tilt.smoothY) * tlerp;
 
     for (const s of stars) {
       s.y += s.v * dt;
@@ -1124,6 +1191,7 @@
         } else {
           player.alive = true;
           player.x = (W - player.w) / 2;
+          player.y = playMaxY();
           state.invuln = 2.6;
           state.helpers = false;
           state.mode = "playing";
@@ -1134,25 +1202,42 @@
 
     if (player.alive && (state.mode === "playing" || state.mode === "waveintro")) {
       const spd = 90;
-      if (pads.dragX !== null) {
-        const target = pads.dragX - player.w / 2;
-        const dx = target - player.x;
-        const max = spd * dt;
-        if (Math.abs(dx) <= max) player.x = target;
-        else player.x += Math.sign(dx) * max;
-      } else if (wantLeft() || wantRight()) {
+      const dragging = pads.dragX !== null || pads.dragY !== null;
+      if (dragging) {
+        const max = spd * 1.35 * dt;
+        if (pads.dragX !== null) {
+          const tx = pads.dragX - player.w / 2;
+          const dx = tx - player.x;
+          if (Math.abs(dx) <= max) player.x = tx;
+          else player.x += Math.sign(dx) * max;
+        }
+        if (pads.dragY !== null) {
+          const ty = pads.dragY - player.h / 2;
+          const dy = ty - player.y;
+          if (Math.abs(dy) <= max) player.y = ty;
+          else player.y += Math.sign(dy) * max;
+        }
+      } else if (wantLeft() || wantRight() || wantUp() || wantDown()) {
         if (wantLeft()) player.x -= spd * dt;
         if (wantRight()) player.x += spd * dt;
+        if (wantUp()) player.y -= spd * dt;
+        if (wantDown()) player.y += spd * dt;
       } else if (tiltActive()) {
         const dead = 6;
         const maxA = 28;
-        let v = tilt.smooth;
-        if (Math.abs(v) > dead) {
-          const t = Math.min(1, (Math.abs(v) - dead) / (maxA - dead));
-          player.x += Math.sign(v) * t * spd * dt;
+        const vx = tilt.smoothX;
+        const vy = tilt.smoothY;
+        if (Math.abs(vx) > dead) {
+          const t = Math.min(1, (Math.abs(vx) - dead) / (maxA - dead));
+          player.x += Math.sign(vx) * t * spd * dt;
+        }
+        if (Math.abs(vy) > dead) {
+          const t = Math.min(1, (Math.abs(vy) - dead) / (maxA - dead));
+          // Portrait: tilting the top away (beta above the calibrated hold angle) moves up.
+          player.y -= Math.sign(vy) * t * spd * dt;
         }
       }
-      player.x = Math.max(2, Math.min(W - player.w - 2, player.x));
+      clampPlayer();
       if (state.invuln > 0) state.invuln -= dt;
       if (state.fireCd > 0) state.fireCd -= dt;
       if (wantFire() && state.mode === "playing") fire();
@@ -1502,7 +1587,7 @@
     }
 
     drawText("Vang de worteltjes!", W / 2, 190, "#ffe070", 1, "center");
-    drawText("Pijltjes of A D: bewegen", W / 2, 204, "#c8a0b0", 1, "center");
+    drawText("Pijltjes of WASD: bewegen", W / 2, 204, "#c8a0b0", 1, "center");
     drawText("Spatie: schieten  P: pauze", W / 2, 216, "#c8a0b0", 1, "center");
     if (state.high > 0) drawText("Hoogste " + pad6(state.high), W / 2, 236, "#ffe070", 1, "center");
   }
